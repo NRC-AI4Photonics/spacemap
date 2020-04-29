@@ -1,0 +1,135 @@
+switchtolayout;
+selectall;
+delete;
+
+if(!exist("sim_dimension")) {
+    sim_dimension = "2D"; # default to 2D
+}
+if(!exist("offset")) {
+    offset = 0;
+}
+
+
+## SIM PARAMS
+size_x=3e-6;
+size_y=4e-6;
+size_z=2e-6; #3D only
+mesh_x=20e-9;
+mesh_y=20e-9;
+mesh_z=20e-9;
+finer_mesh_size_x=2.5e-6+2*mesh_x;
+finer_mesh_size_y=2.5e-6+2*mesh_y;
+index_2d = 2.85;
+
+## GEOMETRY
+
+#INPUT WAVEGUIDE
+
+addrect;
+set('name','input wg');
+set('x span',3e-6);
+set('y span',0.45e-6+2*offset);
+set('z span',220e-9);
+set('z',0);
+set('y',0);
+set('x',-2.5e-6);
+set('index',index_2d);
+
+#OUTPUT WAVEGUIDES
+
+addrect;
+set('name','output wg top');
+set('x span',3e-6);
+set('y span',0.45e-6+2*offset);
+set('z span',220e-9);
+set('z',0);
+set('y',0.35e-6);
+set('x',2.5e-6);
+set('index',index_2d);
+
+addrect;
+set('name','output wg bottom');
+set('x span',3e-6);
+set('y span',0.45e-6+2*offset);
+set('z span',220e-9);
+set('z',0);
+set('y',-0.35e-6);
+set('x',2.5e-6);
+set('index',index_2d);
+
+if(sim_dimension=='3D') {
+    selectall;
+    set("material","Si (Silicon) - Palik");
+}
+
+## SOURCE
+addmode;
+set('direction','Forward');
+set('injection axis','x-axis');
+set('y',0);
+set('x',-1.25e-6);
+set('z',0);
+set('y span',2e-6);
+set('z span',size_z);
+set('center wavelength',1550e-9);
+set('wavelength span',0);
+
+set('override global source settings', 0);
+setglobalsource("wavelength start",1530e-9);
+setglobalsource("wavelength stop",1570e-9);
+
+set('mode selection','fundamental TE mode');
+
+## FDTD
+addfdtd;
+set('dimension',sim_dimension);
+set('background index',1.44);
+set('mesh accuracy',4);
+set('x min',-size_x/2);
+set('x max',size_x/2);
+set('y min',-size_y/2);
+set('y max',size_y/2);
+set('z',0);
+set('y min bc','Anti-Symmetric');
+if(sim_dimension=='3D') {
+    set('z span',size_z);
+    set('z min bc','Symmetric');
+}
+
+## MESH IN OPTIMIZABLE REGION
+addmesh;
+set('x',0);
+set('x span',finer_mesh_size_x);
+set('y',0);
+set('y span',finer_mesh_size_y);
+set('z',0);
+set('z span',260e-9);
+set('dx',mesh_x);
+set('dy',mesh_y);
+set('dz',mesh_z);
+
+## OPTIMIZATION FIELDS MONITOR IN OPTIMIZABLE REGION
+addpower;
+set('name','opt_fields');
+set('monitor type','2D Z-normal');
+set('x min',-size_x/2);
+set('x max',1.1e-6);
+set('y min',-size_y/2);
+set('y max',size_y/2);
+set('z',0);
+if(sim_dimension=='3D') {
+    set('monitor type','3D');
+    set('z span',260e-9);
+}
+
+## FOM FIELDS
+
+addpower;
+set('name','fom');
+set('monitor type','2D X-normal');
+set('x',1.25e-6);
+set('y min',-size_y/2);
+set('y max',size_y/2);
+set('z',0);
+set('z span',size_z);
+setglobalmonitor("use wavelength spacing",1);
