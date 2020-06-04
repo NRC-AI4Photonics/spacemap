@@ -93,26 +93,19 @@ class RandomLumopt:
             self._local_wavelength_points = settings.local_wavelength_points
         else:
             self._local_wavelength_points = 1
+            
+        # Keep track of the latest random restart. Run a first simulation with
+        # the initial parameters already stored in the geometry
+        self._new_param = None
         
-        # How many times the sampler runs
-        self._iteration = 0
-        self._results_num = 0
-        self._sampling_param = list()
-        self._sampling_res = list()
+           
             
-            
-    def run(self, max_results, reset_counter=False, max_iter=np.Inf):
+    def run(self):
         """
         Run the sampling
         
         Parameters
         ----------
-        max_results: int
-            Number of required optimized results (eventually respecting local_result_constraint)
-        reset_counter: bool
-            If true, reset the counters of the number of iterations and results to zero and clears the results previously obtained
-        max_iter: int
-            Maximum number of samples
 
         Returns
         ----------
@@ -123,95 +116,91 @@ class RandomLumopt:
         """
         
         
-        if reset_counter:
-            self._iteration = 0
-            self._results_num = 0
-            self._sampling_param = list()
-            self._sampling_res = list()
-            
-        # Run a first simulation with initial parameters already stored in the geometry
-        new_param = None
+        # keep track of errors and quality of the result
+        error_flag = True
+        good_result = False
         
-        # keep track of consecutive errors
-        error_flag = 0
-            
+        # Collect results from a single global restart run
+        sampling_param = list()
+        sampling_res = list()
         
-        while self._iteration < max_iter and self._results_num < max_results and error_flag < 6:
-            try:
-                print("Global search - iteration " + str(self._iteration))
-                print("Acceptable results: " + str(self._results_num))
+        # Run one single global restart        
+        try:           
+        
+            if self._global_result_constraint is not None:
+                # Only run simulation if we are screening starting points in the global stage
+                sim_res, sim_param = self._study.run(param=self._new_param)
+                sampling_param.append(sim_param)
+                sampling_res.append(sim_res)
+            else:
+                # Otherwise only update the geometry
+                self._study.update_geometry(param=self._new_param)
             
-                if self._global_result_constraint is not None:
-                    # Only run simulation if we are screening starting points in the global stage
-                    sim_res, sim_param = self._study.run(param=new_param)
-                    self._sampling_param.append(sim_param)
-                    self._sampling_res.append(sim_res)
+            if (self._global_result_constraint == None) or (self._global_result_constraint(sim_res)):
+            
+                current_folder = os.getcwd() + '\\'
+            
+                # Inverse design, create. We have to do this here because in self.samples.geometry.geometry
+                # the parameters are already updated to the last global search.
+                inverse_design = LumericalInverseDesign(max_iter = self._local_max_iterations, 
+                                                        method = self._local_method,
+                                                        scaling_factor = self._local_scaling_factor,
+                                                        pgtol = self._local_pgtol,
+                                                        ftol = self._local_ftol,
+                                                        wavelength_start = self._local_wavelength_start,
+                                                        wavelength_stop = self._local_wavelength_stop,
+                                                        wavelength_points = self._local_wavelength_points,
+                                                        build_simulation = self._study.simulation_builder,
+                                                        fom = self._study.fom.fom,
+                                                        geometry = self._study.geometry.geometry,
+                                                        hide_fdtd_cad = self._study.sim.hide_gui)
+                
+                # Inverse design, run
+                res = inverse_design.run()
+                
+                # Store optimization result
+                sampling_param.append(np.array(res[1]))
+                sampling_res.append(res[0])
+            
+                # Return to proper folder
+                os.chdir(current_folder)
+                
+                # Inverse design, clear
+                del inverse_design
+            
+                # Only counts as results if constraint are satisfied
+                if (self._local_result_constraint == None) or (self._local_result_constraint(res[0])):
+                    good_result = True
                 else:
-                    # Otherwise only update the geometry
-                    self._study.update_geometry(param=new_param)
-                
-                if (self._global_result_constraint == None) or (self._global_result_constraint(sim_res)):
-                
-                    current_folder = os.getcwd() + '\\'
-                
-                    # Inverse design, create. We have to do this here because in self.samples.geometry.geometry
-                    # the parameters are already updated to the last global search.
-                    inverse_design = LumericalInverseDesign(max_iter = self._local_max_iterations, 
-                                                            method = self._local_method,
-                                                            scaling_factor = self._local_scaling_factor,
-                                                            pgtol = self._local_pgtol,
-                                                            ftol = self._local_ftol,
-                                                            wavelength_start = self._local_wavelength_start,
-                                                            wavelength_stop = self._local_wavelength_stop,
-                                                            wavelength_points = self._local_wavelength_points,
-                                                            build_simulation = self._study.simulation_builder,
-                                                            fom = self._study.fom.fom,
-                                                            geometry = self._study.geometry.geometry,
-                                                            hide_fdtd_cad = self._study.sim.hide_gui)
+                    good_result = False
+
                     
-                    # Inverse design, run
-                    res = inverse_design.run()
-                    
-                    # Store optimization result
-                    self._sampling_param.append(np.array(res[1]))
-                    self._sampling_res.append(res[0])
+            
+            # Random restart with constraint check: update new_param
+            flag_param_constraint = False
+            while not flag_param_constraint:
+                self._new_param = self._global_sample_function()
                 
-                    # Return to proper folder
-                    os.chdir(current_folder)
-                    
-                    # Inverse design, clear
-                    del inverse_design
-                
-                    # Only counts as results if constraint are satisfied
-                    if (self._local_result_constraint == None) or (self._local_result_constraint(res[0])):
-                        self._results_num += 1
-                
-                # Random restart with constraint check: update new_param
-                flag_param_constraint = False
-                while not flag_param_constraint:
-                    new_param = self._global_sample_function()
-                    
-                    if np.array(self._global_parameters_bounds == None).all() :
+                if np.array(self._global_parameters_bounds == None).all() :
+                    flag_param_constraint = True
+                else:
+                    if (all(self._new_param>self._global_parameters_bounds[:,0]) and all(self._new_param<self._global_parameters_bounds[:,1])):
                         flag_param_constraint = True
-                    else:
-                        if (all(new_param>self._global_parameters_bounds[:,0]) and all(new_param<self._global_parameters_bounds[:,1])):
-                            flag_param_constraint = True
             
-                self._iteration += 1
-                
-                # simulation completed, reset error flag
-                error_flag = 0
-                
-            except Exception as e:
-                print("Error random_lumopt module, run function: ", end="")
-                print(e)
-                error_flag += 1
             
+            # Run completed, reset error flag
+            error_flag = False
+            
+        except Exception as e:
+            print("Error random_lumopt module, run function: ", end="")
+            print(e)
+            error_flag = True
+
         
         # Sampling is done, close the simulation interface
-        self._study.close_simulation()
+        #self._study.close_simulation()
         
-        return(self._sampling_res, self._sampling_param, self._results_num)
+        return(sampling_res,sampling_param, good_result, error_flag)
             
             
             

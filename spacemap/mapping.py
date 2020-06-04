@@ -73,10 +73,14 @@ class SpaceMapping:
         # A container for private service variables #
         #############################################
         self._service = Parameters()
+        self._service.sampler_iteration = 0
+        self._service.sampler_results_num = 0
         self._service.dr_training_index = list()
         self._service.new_name_generated = False #used with autosave to avoid override with first simulation
         self._service.current_file_name = self.set.suffix
         self._service.current_folder = os.getcwd() + '\\'
+        
+        
         
     
     # setter and getter for self.maps variable #
@@ -172,22 +176,50 @@ class SpaceMapping:
     
     def run_sampling(self, max_results=100, reset=False, max_iter=np.Inf):
         
+        if reset:
+            self._service.sampler_iteration = 0
+            self._service.sampler_results_num = 0
+            
+        # Keep track of the number of errors
+        error_num = 0
+        
         # Run the sampling
-        res, used_param, num_acceptable_res = self.sampler.run(max_results=max_results,reset_counter=reset,max_iter=max_iter)
-        
-        # If simulation OK, store the new simulation in the database       
-        for i in range(0,len(res)):
+        while (self._service.sampler_iteration < max_iter and 
+               self._service.sampler_results_num < max_results and 
+               error_num < 6):
+            
+            print("Global search - iteration " + str(self._service.sampler_iteration))
+            print("Acceptable results: " + str(self._service.sampler_results_num))
+            
+            res, used_param, good_result, error_flag = self.sampler.run()
+            
+            # check if error
+            if error_flag == True:
+                error_num =+ 1
+            else:
+                
+                # no error occured, reset the flag, increment the iteration counter,
+                # and store the result(s) in the database
+                
+                error_num = 0
+                self._service.sampler_iteration += 1
+                
+                for i in range(0,len(res)):
 
-            if (res != False):
-                self.data.add_sample(parameters=used_param[i], simulation_name='sampling',
-                                     result=res[i], result_name=self.study.fom_name)  
+                    if (res != False):
+                        self.data.add_sample(parameters=used_param[i], simulation_name='sampling',
+                                             result=res[i], result_name=self.study.fom_name) 
+                        
+                # last, check if the optimized results is above threshold
+                if good_result == True:
+                    self._service.sampler_results_num = self._service.sampler_results_num + 1
 
-        # Save
-        if self.set.autosave:
-            self.save_data(override = True)
+            # Save
+            if self.set.autosave:
+                self.save_data(override = True)
         
         
-        if num_acceptable_res < max_results:
+        if self._service.sampler_results_num < max_results:
             # Something happend and sampler terminated earlier
             return False
         else:
